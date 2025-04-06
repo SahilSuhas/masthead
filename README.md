@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # FastAPI Image Processing API
 
 This API provides image processing capabilities for use with the Figma plugin.
@@ -37,3 +38,6 @@ uvicorn main:app --reload
 ## Requirements
 
 See `requirements.txt` for dependencies. 
+=======
+# masthead
+>>>>>>> f2c1ef8d500930b96c5268f61b1f95ff1842cb71
