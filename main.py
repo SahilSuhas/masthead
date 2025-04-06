@@ -42,8 +42,12 @@ async def get_base_color():
     Returns the current base color determined from the most recent image processing.
     Used by the Figma plugin to retrieve the latest color.
     """
-    global current_base_color
-    return {"base_color": current_base_color}
+    try:
+        with open(os.path.join(TEMP_DIR, "base_color.txt"), "r") as f:
+            color = f.read().strip()
+        return {"base_color": color}
+    except FileNotFoundError:
+        return {"base_color": current_base_color}
 
 def has_transparency(image_path):
     """ Detects if an image has transparency """
@@ -167,6 +171,10 @@ async def process_images(file1: UploadFile = File(...), file2: UploadFile = File
         # Save color globally for the GET endpoint to access
         global current_base_color
         current_base_color = hex_color
+        
+        # Save the color to a file so it persists across requests on Render
+        with open(os.path.join(TEMP_DIR, "base_color.txt"), "w") as f:
+            f.write(hex_color)
         
         # Return only the hex code of the base color
         return {"base_color": hex_color}
