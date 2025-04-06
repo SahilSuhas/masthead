@@ -26,7 +26,8 @@ app.add_middleware(
 )
 
 # Create a directory for storing temporary files
-TEMP_DIR = tempfile.gettempdir()
+TEMP_DIR = "/tmp"
+os.makedirs(TEMP_DIR, exist_ok=True)
 
 @app.get("/")
 def read_root():
@@ -96,8 +97,8 @@ def extract_colors(image_path, num_colors=5):
 def merge_color_palettes(colors1, colors2):
     """ Merges two color palettes and assigns hierarchy based on frequency """
     # Get the original image to count actual frequencies
-    image1 = Image.open("temp_image1.png").convert("RGB").resize((100, 100))
-    image2 = Image.open("temp_image2.png").convert("RGB").resize((100, 100))
+    image1 = Image.open(os.path.join(TEMP_DIR, "temp_image1.png")).convert("RGB").resize((100, 100))
+    image2 = Image.open(os.path.join(TEMP_DIR, "temp_image2.png")).convert("RGB").resize((100, 100))
     
     pixels1 = np.array(image1).reshape(-1, 3)
     pixels2 = np.array(image2).reshape(-1, 3)
@@ -106,7 +107,7 @@ def merge_color_palettes(colors1, colors2):
     # Combine both palettes
     merged = colors1 + colors2
     unique_colors = list(set(merged))  # Remove duplicates
-    
+
     # Count frequency of each unique color across both images
     color_frequencies = {}
     
@@ -118,7 +119,7 @@ def merge_color_palettes(colors1, colors2):
     
     # Sort by frequency
     sorted_colors = sorted(unique_colors, key=lambda c: color_frequencies.get(c, 0), reverse=True)
-    
+
     return {
         "base_color": sorted_colors[0],  # The most frequent color
         "secondary_color": sorted_colors[1] if len(sorted_colors) > 1 else sorted_colors[0],
@@ -129,17 +130,17 @@ def merge_color_palettes(colors1, colors2):
 async def process_images(file1: UploadFile = File(...), file2: UploadFile = File(...)):
     try:
         # Save uploaded files temporarily
-        temp_image1_path = os.path.join(TEMP_DIR, "temp_image1.png")
+        temp_file_path = os.path.join(TEMP_DIR, "temp_image1.png")
         temp_image2_path = os.path.join(TEMP_DIR, "temp_image2.png")
         
-        with open(temp_image1_path, "wb") as f:
+        with open(temp_file_path, "wb") as f:
             f.write(await file1.read())
         
         with open(temp_image2_path, "wb") as f:
             f.write(await file2.read())
         
         # Extract dominant colors from both images
-        colors1 = extract_colors(temp_image1_path)
+        colors1 = extract_colors(temp_file_path)
         colors2 = extract_colors(temp_image2_path)
         
         # Merge color palettes and determine hierarchy
@@ -160,8 +161,8 @@ async def process_images(file1: UploadFile = File(...), file2: UploadFile = File
     finally:
         # Clean up temporary files
         try:
-            if os.path.exists(temp_image1_path):
-                os.remove(temp_image1_path)
+            if os.path.exists(temp_file_path):
+                os.remove(temp_file_path)
             if os.path.exists(temp_image2_path):
                 os.remove(temp_image2_path)
         except Exception as cleanup_error:
@@ -234,7 +235,7 @@ def detect_text_in_image(image_path):
                 "confidence": data['conf'][i],
                 "bbox": [[x, y], [x + w, y], [x + w, y + h], [x, y + h]]
             })
-    
+
     return {
         "text_regions": text_regions,
         "image_dimensions": {
@@ -303,7 +304,7 @@ def visualize_text_detection(image_path, text_data):
     cv2.putText(vis_img, title, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 100, 255), 1)
     
     # Save the visualization
-    output_path = "text_visualization.png"
+    output_path = os.path.join(TEMP_DIR, "text_visualization.png")
     cv2.imwrite(output_path, vis_img)
     
     return output_path
@@ -314,7 +315,7 @@ async def detect_text_endpoint(file: UploadFile = File(...)):
     Endpoint to detect text in a transparent PNG image and return 
     bounding boxes and visualization.
     """
-    image_path = "temp_text_image.png"
+    image_path = os.path.join(TEMP_DIR, "temp_text_image.png")
     
     try:
         # Save uploaded file
@@ -361,7 +362,8 @@ def convert_svg_to_mask(svg_content: bytes, width: int = 1440, height: int = 102
     """Convert SVG content to a binary mask that accurately represents the SVG shape."""
     try:
         # Save SVG content to a temporary file for debugging
-        with open("debug_svg.svg", "wb") as f:
+        debug_svg_path = os.path.join(TEMP_DIR, "debug_svg.svg")
+        with open(debug_svg_path, "wb") as f:
             f.write(svg_content)
         
         # Try to extract viewBox from SVG to get correct scaling
@@ -422,7 +424,8 @@ def convert_svg_to_mask(svg_content: bytes, width: int = 1440, height: int = 102
                     binary_mask = binary_mask2
             
             # Save mask for debugging
-            cv2.imwrite("debug_mask.png", binary_mask)
+            debug_mask_path = os.path.join(TEMP_DIR, "debug_mask.png")
+            cv2.imwrite(debug_mask_path, binary_mask)
             
             # Clean up
             os.unlink(tmp.name)
@@ -433,7 +436,8 @@ def convert_svg_to_mask(svg_content: bytes, width: int = 1440, height: int = 102
         # Create a fallback mask (a simple rectangle) for debugging
         fallback_mask = np.zeros((height, width), dtype=np.uint8)
         fallback_mask[50:height-50, 50:width-50] = 255  # Simple rectangle with margin
-        cv2.imwrite("fallback_mask.png", fallback_mask)
+        fallback_path = os.path.join(TEMP_DIR, "fallback_mask.png")
+        cv2.imwrite(fallback_path, fallback_mask)
         return fallback_mask
 
 def extract_svg_polygon(svg_content: bytes, width: int = 1440, height: int = 1024) -> List[List[int]]:
@@ -484,7 +488,8 @@ def extract_svg_polygon(svg_content: bytes, width: int = 1440, height: int = 102
                 cx = int(M["m10"] / M["m00"])
                 cy = int(M["m01"] / M["m00"])
                 cv2.putText(contour_debug, f"{area:.1f}", (cx, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-        cv2.imwrite("all_contours_debug.png", contour_debug)
+        contour_debug_path = os.path.join(TEMP_DIR, "all_contours_debug.png")
+        cv2.imwrite(contour_debug_path, contour_debug)
         
         # Find the largest contour by area
         largest_contour_idx = 0
@@ -520,7 +525,8 @@ def extract_svg_polygon(svg_content: bytes, width: int = 1440, height: int = 102
         for i, point in enumerate(polygon):
             cv2.circle(contour_vis, tuple(point), 5, (255, 0, 0), -1)
             cv2.putText(contour_vis, str(i), (point[0]+5, point[1]+5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-        cv2.imwrite("debug_contour.png", contour_vis)
+        debug_contour_path = os.path.join(TEMP_DIR, "debug_contour.png")
+        cv2.imwrite(debug_contour_path, contour_vis)
         
         return polygon
         
@@ -941,7 +947,8 @@ def calculate_product_placement(
     cv2.fillPoly(mask, [polygon_points], 255)
     
     # Save mask for debugging
-    cv2.imwrite("mask_debug.png", mask)
+    mask_debug_path = os.path.join(TEMP_DIR, "mask_debug.png")
+    cv2.imwrite(mask_debug_path, mask)
     
     # 2. Load the product images and get original dimensions
     product1_img = cv2.imread(product1_path, cv2.IMREAD_UNCHANGED)
@@ -1395,7 +1402,8 @@ def calculate_product_placement(
     debug_mask_test[mask > 0] = [150, 150, 150]  # Gray background for mask
     debug_mask_test[test_img > 0] = [0, 255, 0]  # Green for products
     debug_mask_test[outside_mask > 0] = [0, 0, 255]  # Red for out-of-bounds pixels
-    cv2.imwrite("mask_test_debug.png", debug_mask_test)
+    mask_test_debug_path = os.path.join(TEMP_DIR, "mask_test_debug.png")
+    cv2.imwrite(mask_test_debug_path, debug_mask_test)
     
     # 9. Verify final aspect ratios
     final_p1_aspect = p1_target_w / p1_target_h
@@ -1451,7 +1459,8 @@ def calculate_product_placement(
     # Draw SVG polygon
     cv2.polylines(debug_img, [polygon_points], True, (0, 0, 255), 2)
     
-    cv2.imwrite("placement_debug.png", debug_img)
+    placement_debug_path = os.path.join(TEMP_DIR, "placement_debug.png")
+    cv2.imwrite(placement_debug_path, debug_img)
     
     # Place products on the canvas
     for placement, img in zip(placements, [p1_resized, p2_resized]):
@@ -1492,9 +1501,11 @@ def calculate_product_placement(
             # Copy alpha channel
             roi[:, :, 3][mask] = img_roi[:, :, 3][mask]
     
-    # Save individual placed products
-    cv2.imwrite("product1_placed.png", p1_resized)
-    cv2.imwrite("product2_placed.png", p2_resized)
+    product1_placed_path = os.path.join(TEMP_DIR, "product1_placed.png")
+    cv2.imwrite(product1_placed_path, p1_resized)
+    
+    product2_placed_path = os.path.join(TEMP_DIR, "product2_placed.png")
+    cv2.imwrite(product2_placed_path, p2_resized)
     
     # 12. Create overlap vector shape
     overlap_data = create_overlap_vector_shape(
