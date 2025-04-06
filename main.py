@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Query
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Response
 import cv2
 import numpy as np
 from sklearn.cluster import KMeans
@@ -29,9 +29,21 @@ app.add_middleware(
 TEMP_DIR = "/tmp"
 os.makedirs(TEMP_DIR, exist_ok=True)
 
+# Default color that will be returned if no processing has been done
+current_base_color = "#E5BE3D"
+
 @app.get("/")
 def read_root():
     return {"message": "FastAPI is working!"}
+
+@app.get("/get-base-color")
+async def get_base_color():
+    """
+    Returns the current base color determined from the most recent image processing.
+    Used by the Figma plugin to retrieve the latest color.
+    """
+    global current_base_color
+    return {"base_color": current_base_color}
 
 def has_transparency(image_path):
     """ Detects if an image has transparency """
@@ -151,6 +163,10 @@ async def process_images(file1: UploadFile = File(...), file2: UploadFile = File
         
         # Convert RGB to hex
         hex_color = "#{:02X}{:02X}{:02X}".format(base_color[0], base_color[1], base_color[2])
+        
+        # Save color globally for the GET endpoint to access
+        global current_base_color
+        current_base_color = hex_color
         
         # Return only the hex code of the base color
         return {"base_color": hex_color}
