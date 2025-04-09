@@ -13,6 +13,7 @@ import base64
 import json
 from dataclasses import dataclass, field, asdict
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 app = FastAPI()
 
@@ -2104,3 +2105,105 @@ def create_overlap_vector_shape(
         "coordinates": coordinates,
         "overlap_percentage": overlap_percentage
     }
+
+@app.post("/extract-logo/")
+async def extract_logo(file: UploadFile = File(...)):
+    """
+    Endpoint to extract a logo by cropping a transparent PNG to its visible pixel dimensions.
+    """
+    try:
+        # Save uploaded file temporarily
+        temp_input_path = os.path.join(TEMP_DIR, "temp_logo_input.png")
+        temp_output_path = os.path.join(TEMP_DIR, "extracted_logo.png")
+        
+        with open(temp_input_path, "wb") as f:
+            f.write(await file.read())
+        
+        # Extract actual boundary box and crop the image
+        crop_info = crop_to_visible_pixels(temp_input_path, temp_output_path)
+        
+        # Get the file dimensions and size
+        image = Image.open(temp_output_path)
+        width, height = image.size
+        file_size = os.path.getsize(temp_output_path)
+        
+        return {
+            "success": True,
+            "message": "Logo extracted successfully",
+            "crop_info": crop_info,
+            "dimensions": {
+                "width": width,
+                "height": height
+            },
+            "file_size": file_size
+        }
+        
+    except Exception as e:
+        print(f"Error in extract_logo: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        # Clean up input file
+        try:
+            if os.path.exists(temp_input_path):
+                os.remove(temp_input_path)
+        except Exception as cleanup_error:
+            print(f"Error cleaning up temporary input file: {cleanup_error}")
+
+@app.get("/get-extracted-logo/")
+async def get_extracted_logo():
+    """
+    Endpoint to retrieve the extracted logo image.
+    """
+    try:
+        logo_path = os.path.join(TEMP_DIR, "extracted_logo.png")
+        
+        if not os.path.exists(logo_path):
+            raise HTTPException(status_code=404, detail="No extracted logo found")
+        
+        return FileResponse(
+            logo_path, 
+            media_type="image/png", 
+            filename="extracted_logo.png"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error in get_extracted_logo: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Add the crop_to_visible_pixels function before the extract_logo endpoint
+def crop_to_visible_pixels(input_path, output_path):
+    """
+    Crops a transparent PNG to the visible pixel dimensions
+    by removing excess transparent areas.
+    """
+    # Read the image with alpha channel
+    image = cv2.imread(input_path, cv2.IMREAD_UNCHANGED)
+    
+    if image is None:
+        raise ValueError(f"Could not read image: {input_path}")
+    
+    # Ensure image has an alpha channel
+    if image.shape[-1] != 4:
+        raise ValueError("Image must have an alpha channel (transparent PNG)")
+    
+    # Extract alpha channel
+    alpha_channel = image[:, :, 3]
+    
+    # Get non-zero points (visible pixels)
+    non_zero_points = cv2.findNonZero(alpha_channel)
+    
+    if non_zero_points is None:
+        raise ValueError("No visible pixels found in the image")
+    
+    # Get bounding rectangle
+    x, y, w, h = cv2.boundingRect(non_zero_points)
+    
+    # Crop the image
+    cropped_image = image[y:y+h, x:x+w]
+    
+    # Save the cropped image
+    cv2.imwrite(output_path, cropped_image)
+    
+    return {"x": x, "y": y, "width": w, "height": h}
