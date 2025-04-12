@@ -117,37 +117,66 @@ def extract_colors(image_path, num_colors=5):
     
     return filtered_colors[:num_colors]  # Return only the top num_colors
 
-def merge_color_palettes(colors1, colors2):
+def merge_color_palettes(colors1, colors2, image1_path=None, image2_path=None):
     """ Merges two color palettes and assigns hierarchy based on frequency """
     # Get the original image to count actual frequencies
-    image1 = Image.open(os.path.join(TEMP_DIR, "temp_image1.png")).convert("RGB").resize((100, 100))
-    image2 = Image.open(os.path.join(TEMP_DIR, "temp_image2.png")).convert("RGB").resize((100, 100))
-    
-    pixels1 = np.array(image1).reshape(-1, 3)
-    pixels2 = np.array(image2).reshape(-1, 3)
-    all_pixels = np.vstack([pixels1, pixels2])
-    
-    # Combine both palettes
-    merged = colors1 + colors2
-    unique_colors = list(set(merged))  # Remove duplicates
+    try:
+        # Use provided image paths if given
+        if image1_path and image2_path and os.path.exists(image1_path) and os.path.exists(image2_path):
+            image1 = Image.open(image1_path).convert("RGB").resize((100, 100))
+            image2 = Image.open(image2_path).convert("RGB").resize((100, 100))
+        else:
+            # Fallback to default paths for backward compatibility
+            default_path1 = os.path.join(TEMP_DIR, "temp_image1.png")
+            default_path2 = os.path.join(TEMP_DIR, "temp_image2.png")
+            
+            if os.path.exists(default_path1) and os.path.exists(default_path2):
+                image1 = Image.open(default_path1).convert("RGB").resize((100, 100))
+                image2 = Image.open(default_path2).convert("RGB").resize((100, 100))
+            else:
+                # If files don't exist, use simplified approach without frequency analysis
+                # Just combine the colors from both palettes
+                merged = colors1 + colors2
+                unique_colors = list(set(merged))
+                return {
+                    "base_color": colors1[0] if colors1 else (128, 128, 128),
+                    "secondary_color": colors2[0] if colors2 else (128, 128, 128),
+                    "accent_colors": unique_colors[2:5] if len(unique_colors) > 2 else []
+                }
+                
+        pixels1 = np.array(image1).reshape(-1, 3)
+        pixels2 = np.array(image2).reshape(-1, 3)
+        all_pixels = np.vstack([pixels1, pixels2])
+        
+        # Combine both palettes
+        merged = colors1 + colors2
+        unique_colors = list(set(merged))  # Remove duplicates
 
-    # Count frequency of each unique color across both images
-    color_frequencies = {}
-    
-    for color in unique_colors:
-        # Calculate how close each pixel is to this color
-        distances = np.sum((all_pixels - np.array(color)) ** 2, axis=1)
-        # Count pixels that are close to this color (using a threshold)
-        color_frequencies[color] = np.sum(distances < 1000)  # Adjust threshold as needed
-    
-    # Sort by frequency
-    sorted_colors = sorted(unique_colors, key=lambda c: color_frequencies.get(c, 0), reverse=True)
+        # Count frequency of each unique color across both images
+        color_frequencies = {}
+        
+        for color in unique_colors:
+            # Calculate how close each pixel is to this color
+            distances = np.sum((all_pixels - np.array(color)) ** 2, axis=1)
+            # Count pixels that are close to this color (using a threshold)
+            color_frequencies[color] = np.sum(distances < 1000)  # Adjust threshold as needed
+        
+        # Sort by frequency
+        sorted_colors = sorted(unique_colors, key=lambda c: color_frequencies.get(c, 0), reverse=True)
 
-    return {
-        "base_color": sorted_colors[0],  # The most frequent color
-        "secondary_color": sorted_colors[1] if len(sorted_colors) > 1 else sorted_colors[0],
-        "accent_colors": sorted_colors[2:] if len(sorted_colors) > 2 else []
-    }
+        return {
+            "base_color": sorted_colors[0] if sorted_colors else (128, 128, 128),  # The most frequent color
+            "secondary_color": sorted_colors[1] if len(sorted_colors) > 1 else sorted_colors[0] if sorted_colors else (128, 128, 128),
+            "accent_colors": sorted_colors[2:] if len(sorted_colors) > 2 else []
+        }
+    except Exception as e:
+        print(f"Error in merge_color_palettes: {str(e)}")
+        # Provide a fallback in case of any error
+        return {
+            "base_color": colors1[0] if colors1 else (128, 128, 128),
+            "secondary_color": colors2[0] if colors2 else (128, 128, 128),
+            "accent_colors": []
+        }
 
 @app.post("/process-images/")
 async def process_images(file1: UploadFile = File(...), file2: UploadFile = File(...)):
@@ -167,7 +196,7 @@ async def process_images(file1: UploadFile = File(...), file2: UploadFile = File
         colors2 = extract_colors(temp_image2_path)
         
         # Merge color palettes and determine hierarchy
-        merged_colors = merge_color_palettes(colors1, colors2)
+        merged_colors = merge_color_palettes(colors1, colors2, temp_file_path, temp_image2_path)
         
         # Get the base color directly from the dictionary
         base_color = merged_colors["base_color"]
@@ -1989,7 +2018,7 @@ async def process_masthead_item(item, index):
                 colors2 = extract_colors(product2_path)
                 
                 # Merge color palettes and determine hierarchy
-                merged_colors = merge_color_palettes(colors1, colors2)
+                merged_colors = merge_color_palettes(colors1, colors2, product1_path, product2_path)
                 
                 # Get the base color
                 base_color = merged_colors["base_color"]
@@ -2232,7 +2261,7 @@ async def generate_mastheads_binary(
             colors2 = extract_colors(product2_path)
             
             # Merge color palettes and determine hierarchy
-            merged_colors = merge_color_palettes(colors1, colors2)
+            merged_colors = merge_color_palettes(colors1, colors2, product1_path, product2_path)
             
             # Get the base color from the dictionary
             base_color = merged_colors["base_color"]
