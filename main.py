@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Response, Request
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Response, Request, Form
 import cv2
 import numpy as np
 from sklearn.cluster import KMeans
@@ -2179,3 +2179,115 @@ async def get_masthead_logo(masthead_id: int):
         status_code=404, 
         detail=f"Logo for masthead with ID {masthead_id} not found"
     )
+
+@app.post("/generate-mastheads-binary/")
+async def generate_mastheads_binary(
+    product1: UploadFile = File(...),
+    product2: UploadFile = File(...),
+    logo: UploadFile = File(...),
+    copy_line_1: str = Form(...),
+    copy_line_2: str = Form(...),
+    brand_name: str = Form(...)
+):
+    """
+    Master endpoint that processes a masthead with direct binary uploads
+    instead of URLs. Accepts multipart form data with files and text fields.
+    """
+    try:
+        global processed_mastheads
+        
+        # Create a unique ID for this masthead
+        masthead_id = len(processed_mastheads) if processed_mastheads else 0
+        
+        # Initialize result object
+        result = {
+            "id": masthead_id,
+            "brand_name": brand_name,
+            "copy_line_1": copy_line_1,
+            "copy_line_2": copy_line_2
+        }
+        
+        # 1. Process product images to get base color
+        # Save uploaded files temporarily
+        product1_path = os.path.join(TEMP_DIR, f"temp_product1_{masthead_id}.png")
+        product2_path = os.path.join(TEMP_DIR, f"temp_product2_{masthead_id}.png")
+        logo_path = os.path.join(TEMP_DIR, f"temp_logo_input_{masthead_id}.png")
+        logo_output_path = os.path.join(TEMP_DIR, f"extracted_logo_{masthead_id}.png")
+        
+        # Save product1
+        with open(product1_path, "wb") as f:
+            f.write(await product1.read())
+        
+        # Save product2
+        with open(product2_path, "wb") as f:
+            f.write(await product2.read())
+        
+        # Save logo
+        with open(logo_path, "wb") as f:
+            f.write(await logo.read())
+        
+        try:
+            # Extract colors from both product images
+            colors1 = extract_colors(product1_path)
+            colors2 = extract_colors(product2_path)
+            
+            # Merge color palettes and determine hierarchy
+            merged_colors = merge_color_palettes(colors1, colors2)
+            
+            # Get the base color from the dictionary
+            base_color = merged_colors["base_color"]
+            
+            # Convert RGB to hex
+            hex_color = "#{:02X}{:02X}{:02X}".format(base_color[0], base_color[1], base_color[2])
+            
+            # Add base color to result
+            result["base_color"] = hex_color
+            
+            # Crop logo to visible pixels
+            crop_info = crop_to_visible_pixels(logo_path, logo_output_path)
+            
+            # Get logo dimensions
+            image = Image.open(logo_output_path)
+            width, height = image.size
+            
+            # Add logo info to result
+            result["logo"] = {
+                "url": f"/get-masthead-logo/{masthead_id}",
+                "dimensions": {
+                    "width": width,
+                    "height": height
+                },
+                "crop_info": crop_info
+            }
+            
+            # Store the logo path for retrieval
+            result["_logo_path"] = logo_output_path
+            
+            # Add this masthead to the processed list
+            processed_mastheads.append(result)
+            
+            # Return success response
+            return {
+                "success": True,
+                "message": "Successfully processed masthead",
+                "masthead": {
+                    k: v for k, v in result.items() 
+                    if not k.startswith('_')  # Exclude fields starting with _
+                }
+            }
+            
+        except Exception as processing_error:
+            print(f"Error processing images: {str(processing_error)}")
+            raise HTTPException(status_code=500, detail=str(processing_error))
+        finally:
+            # Clean up product files (but keep logo for retrieval)
+            try:
+                os.remove(product1_path)
+                os.remove(product2_path)
+                os.remove(logo_path)
+            except Exception as cleanup_error:
+                print(f"Error cleaning up temporary files: {cleanup_error}")
+                
+    except Exception as e:
+        print(f"Error in generate_mastheads_binary: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
