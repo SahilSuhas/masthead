@@ -7,3 +7,4 @@ Pillow==10.0.0
 pytesseract==0.3.10
 python-multipart==0.0.6
 cairosvg==2.7.1
+requests==2.31.0
