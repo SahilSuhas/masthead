@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Response
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Response, Request
 import cv2
 import numpy as np
 from sklearn.cluster import KMeans
@@ -14,6 +14,8 @@ import json
 from dataclasses import dataclass, field, asdict
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+import requests
+import re
 
 app = FastAPI()
 
@@ -32,6 +34,10 @@ os.makedirs(TEMP_DIR, exist_ok=True)
 
 # Default color that will be returned if no processing has been done
 current_base_color = "#E5BE3D"
+
+# Add these global variables for temporary storage
+# Store processed mastheads
+processed_mastheads = []
 
 @app.get("/")
 def read_root():
@@ -1815,297 +1821,6 @@ async def place_products_in_svg(
                 except Exception as e:
                     print(f"Error removing temp file {path}: {str(e)}")
 
-
-def create_overlap_vector_shape(
-    product1_img: np.ndarray, 
-    product2_img: np.ndarray, 
-    p1_x_pos: int, 
-    p1_y_pos: int, 
-    p2_x_pos: int, 
-    p2_y_pos: int,
-    canvas_width: int,
-    canvas_height: int
-) -> Dict[str, Any]:
-    """
-    Create a vector shape of the pixel area overlap between two products.
-    Also creates base vectors (5px high strips) at the bottom of each product.
-    Returns the path to the SVG file and overlap coordinates.
-    """
-    print("Creating overlap vector shape...")
-    
-    # Create binary masks for visible content of both products on the canvas
-    canvas_mask1 = np.zeros((canvas_height, canvas_width), dtype=np.uint8)
-    canvas_mask2 = np.zeros((canvas_height, canvas_width), dtype=np.uint8)
-    
-    # Extract alpha channels
-    alpha1 = product1_img[:, :, 3] if product1_img.shape[-1] == 4 else np.ones(product1_img.shape[:2], dtype=np.uint8) * 255
-    alpha2 = product2_img[:, :, 3] if product2_img.shape[-1] == 4 else np.ones(product2_img.shape[:2], dtype=np.uint8) * 255
-    
-    # Fill the masks based on product positions and transparency
-    h1, w1 = product1_img.shape[:2]
-    h2, w2 = product2_img.shape[:2]
-    
-    # Place product 1 visible pixels on canvas mask
-    for y in range(h1):
-        for x in range(w1):
-            if alpha1[y, x] > 127:  # Only visible pixels
-                canvas_y = p1_y_pos + y
-                canvas_x = p1_x_pos + x
-                if 0 <= canvas_y < canvas_height and 0 <= canvas_x < canvas_width:
-                    canvas_mask1[canvas_y, canvas_x] = 255
-    
-    # Place product 2 visible pixels on canvas mask
-    for y in range(h2):
-        for x in range(w2):
-            if alpha2[y, x] > 127:  # Only visible pixels
-                canvas_y = p2_y_pos + y
-                canvas_x = p2_x_pos + x
-                if 0 <= canvas_y < canvas_height and 0 <= canvas_x < canvas_width:
-                    canvas_mask2[canvas_y, canvas_x] = 255
-    
-    # Calculate overlap using bitwise AND
-    overlap_mask = cv2.bitwise_and(canvas_mask1, canvas_mask2)
-    
-    # Save masks for debugging
-    cv2.imwrite(os.path.join(TEMP_DIR, "debug_mask1.png"), canvas_mask1)
-    cv2.imwrite(os.path.join(TEMP_DIR, "debug_mask2.png"), canvas_mask2)
-    cv2.imwrite(os.path.join(TEMP_DIR, "debug_overlap_mask.png"), overlap_mask)
-    
-    # Find the bottom edge of visible pixels for each product
-    # For product 1
-    p1_base_segments = []
-    p1_bottom_edge = np.zeros((canvas_width,), dtype=bool)
-    
-    for x in range(w1):
-        for y in range(h1-1, -1, -1):  # Start from bottom, move up
-            if alpha1[y, x] > 127:  # Found a visible pixel
-                canvas_x = p1_x_pos + x
-                canvas_y = p1_y_pos + y
-                if 0 <= canvas_y < canvas_height and 0 <= canvas_x < canvas_width:
-                    p1_bottom_edge[canvas_x] = True
-                break
-    
-    # Form continuous segments for product 1
-    segment_start = -1
-    for x in range(canvas_width):
-        if p1_bottom_edge[x] and segment_start == -1:
-            segment_start = x
-        elif not p1_bottom_edge[x] and segment_start != -1:
-            p1_base_segments.append((segment_start, x-1))
-            segment_start = -1
-    
-    # Don't forget the last segment if it ends at the edge
-    if segment_start != -1:
-        p1_base_segments.append((segment_start, canvas_width-1))
-    
-    # For product 2
-    p2_base_segments = []
-    p2_bottom_edge = np.zeros((canvas_width,), dtype=bool)
-    
-    for x in range(w2):
-        for y in range(h2-1, -1, -1):  # Start from bottom, move up
-            if alpha2[y, x] > 127:  # Found a visible pixel
-                canvas_x = p2_x_pos + x
-                canvas_y = p2_y_pos + y
-                if 0 <= canvas_y < canvas_height and 0 <= canvas_x < canvas_width:
-                    p2_bottom_edge[canvas_x] = True
-                break
-    
-    # Form continuous segments for product 2
-    segment_start = -1
-    for x in range(canvas_width):
-        if p2_bottom_edge[x] and segment_start == -1:
-            segment_start = x
-        elif not p2_bottom_edge[x] and segment_start != -1:
-            p2_base_segments.append((segment_start, x-1))
-            segment_start = -1
-    
-    # Don't forget the last segment if it ends at the edge
-    if segment_start != -1:
-        p2_base_segments.append((segment_start, canvas_width-1))
-    
-    print(f"Found {len(p1_base_segments)} base segments for product 1")
-    print(f"Found {len(p2_base_segments)} base segments for product 2")
-    
-    # Check if there's overlap
-    if np.sum(overlap_mask) == 0:
-        print("No overlap detected between products.")
-        return {"svg_path": None, "coordinates": [], "overlap_percentage": 0}
-    
-    # Find contours of the overlap
-    contours, _ = cv2.findContours(overlap_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
-    if not contours:
-        print("No contours found in overlap.")
-        return {"svg_path": None, "coordinates": [], "overlap_percentage": 0}
-    
-    # Create a visualization image
-    visualization = np.zeros((canvas_height, canvas_width, 4), dtype=np.uint8)
-    # Draw the first product in blue with transparency
-    visualization[canvas_mask1 > 0] = [0, 0, 255, 100]
-    # Draw the second product in green with transparency
-    visualization[canvas_mask2 > 0] = [0, 255, 0, 100]
-    # Draw the overlap in red
-    visualization[overlap_mask > 0] = [255, 0, 0, 200]
-    
-    # Draw the base segments for visualization
-    base_height = 5  # Height of base vector in pixels
-    for start_x, end_x in p1_base_segments:
-        for y in range(5):  # 5px height
-            for x in range(start_x, end_x + 1):
-                # Get y-coordinate of the bottom pixel at this x
-                for y_check in range(canvas_height-1, -1, -1):
-                    if canvas_mask1[y_check, x] > 0:
-                        bottom_y = y_check
-                        break
-                else:
-                    continue
-                
-                # Draw base vector pixel
-                if 0 <= bottom_y + y + 1 < canvas_height:
-                    visualization[bottom_y + y + 1, x] = [0, 0, 0, 255]  # Black, fully opaque
-    
-    for start_x, end_x in p2_base_segments:
-        for y in range(5):  # 5px height
-            for x in range(start_x, end_x + 1):
-                # Get y-coordinate of the bottom pixel at this x
-                for y_check in range(canvas_height-1, -1, -1):
-                    if canvas_mask2[y_check, x] > 0:
-                        bottom_y = y_check
-                        break
-                else:
-                    continue
-                
-                # Draw base vector pixel
-                if 0 <= bottom_y + y + 1 < canvas_height:
-                    visualization[bottom_y + y + 1, x] = [0, 0, 0, 255]  # Black, fully opaque
-    
-    # Save visualization
-    cv2.imwrite(os.path.join(TEMP_DIR, "overlap_and_base_visualization.png"), visualization)
-    
-    # Calculate overlap percentage
-    total_pixels1 = np.sum(canvas_mask1 > 0)
-    total_pixels2 = np.sum(canvas_mask2 > 0)
-    overlap_pixels = np.sum(overlap_mask > 0)
-    
-    smaller_product_pixels = min(total_pixels1, total_pixels2)
-    overlap_percentage = (overlap_pixels / smaller_product_pixels) * 100 if smaller_product_pixels > 0 else 0
-    
-    print(f"Overlap: {overlap_pixels} pixels, {overlap_percentage:.2f}% of smaller product")
-    
-    # Find the largest contour for overlap
-    largest_contour = max(contours, key=cv2.contourArea)
-    
-    # Simplify the contour for SVG (approximate polygon)
-    epsilon = 0.003 * cv2.arcLength(largest_contour, True)
-    approx_poly = cv2.approxPolyDP(largest_contour, epsilon, True)
-    
-    # Extract coordinates for overlap SVG
-    coordinates = [{"x": int(point[0][0]), "y": int(point[0][1])} for point in approx_poly]
-    
-    # Create SVG content
-    svg_width = canvas_width
-    svg_height = canvas_height
-    
-    svg_content = f'<svg xmlns="http://www.w3.org/2000/svg" width="{svg_width}" height="{svg_height}" viewBox="0 0 {svg_width} {svg_height}">\n'
-    
-    # Add description
-    svg_content += '  <desc>Product Overlap Area and Base Vectors</desc>\n'
-    
-    # Create a separate SVG file just for base vectors
-    base_svg_content = f'<svg xmlns="http://www.w3.org/2000/svg" width="{svg_width}" height="{svg_height}" viewBox="0 0 {svg_width} {svg_height}">\n'
-    base_svg_content += '  <desc>Product Base Vectors</desc>\n'
-    
-    # Add base vectors to SVG content - Product 1
-    for start_x, end_x in p1_base_segments:
-        # For each segment, find its bottom edge y-coordinate
-        for x_mid in range(start_x, end_x + 1):
-            # Find the y-coordinate at the bottom of the product for this x
-            for y_check in range(canvas_height-1, -1, -1):
-                if x_mid < canvas_width and canvas_mask1[y_check, x_mid] > 0:
-                    bottom_y = y_check
-                    
-                    # Create a rectangle for this base segment
-                    rect_x = start_x
-                    rect_y = bottom_y + 1  # Start just below the bottom edge
-                    rect_width = end_x - start_x + 1
-                    rect_height = base_height
-                    
-                    # Add rectangle to SVG
-                    svg_content += f'  <rect x="{rect_x}" y="{rect_y}" width="{rect_width}" height="{rect_height}" fill="black" stroke="none" />\n'
-                    base_svg_content += f'  <rect x="{rect_x}" y="{rect_y}" width="{rect_width}" height="{rect_height}" fill="black" stroke="none" />\n'
-                    break
-            # Only need to find one y-coordinate per segment
-            break
-    
-    # Add base vectors to SVG content - Product 2
-    for start_x, end_x in p2_base_segments:
-        # For each segment, find its bottom edge y-coordinate
-        for x_mid in range(start_x, end_x + 1):
-            # Find the y-coordinate at the bottom of the product for this x
-            for y_check in range(canvas_height-1, -1, -1):
-                if x_mid < canvas_width and canvas_mask2[y_check, x_mid] > 0:
-                    bottom_y = y_check
-                    
-                    # Create a rectangle for this base segment
-                    rect_x = start_x
-                    rect_y = bottom_y + 1  # Start just below the bottom edge
-                    rect_width = end_x - start_x + 1
-                    rect_height = base_height
-                    
-                    # Add rectangle to SVG
-                    svg_content += f'  <rect x="{rect_x}" y="{rect_y}" width="{rect_width}" height="{rect_height}" fill="black" stroke="none" />\n'
-                    base_svg_content += f'  <rect x="{rect_x}" y="{rect_y}" width="{rect_width}" height="{rect_height}" fill="black" stroke="none" />\n'
-                    break
-            # Only need to find one y-coordinate per segment
-            break
-    
-    # Convert overlap contour to SVG path
-    path_data = "M "
-    for i, point in enumerate(approx_poly):
-        x, y = point[0]
-        if i == 0:
-            path_data += f"{x},{y} "
-        else:
-            path_data += f"L {x},{y} "
-    path_data += "Z"  # Close the path
-    
-    # Add the overlap path with black fill, no stroke, and 100% opacity
-    svg_content += f'  <path d="{path_data}" fill="black" stroke="none" />\n'
-    
-    # Add coordinate data as metadata
-    svg_content += '  <metadata>\n'
-    svg_content += f'    <overlap_percentage>{overlap_percentage:.2f}</overlap_percentage>\n'
-    svg_content += '    <coordinates>\n'
-    for i, coord in enumerate(coordinates):
-        svg_content += f'      <point id="{i}" x="{coord["x"]}" y="{coord["y"]}" />\n'
-    svg_content += '    </coordinates>\n'
-    svg_content += '  </metadata>\n'
-    
-    # Close SVG tags
-    svg_content += '</svg>'
-    base_svg_content += '</svg>'
-    
-    # Save both SVG files
-    svg_path = os.path.join(TEMP_DIR, "overlap_vector_shape.svg")
-    base_svg_path = os.path.join(TEMP_DIR, "base_vector_shape.svg")
-    
-    with open(svg_path, "w") as f:
-        f.write(svg_content)
-    
-    with open(base_svg_path, "w") as f:
-        f.write(base_svg_content)
-    
-    print(f"Saved overlap vector shape with base vectors to {svg_path}")
-    print(f"Saved separate base vector shape to {base_svg_path}")
-    
-    return {
-        "svg_path": svg_path,
-        "base_svg_path": base_svg_path,
-        "coordinates": coordinates,
-        "overlap_percentage": overlap_percentage
-    }
-
 @app.post("/extract-logo/")
 async def extract_logo(file: UploadFile = File(...)):
     """
@@ -2207,3 +1922,260 @@ def crop_to_visible_pixels(input_path, output_path):
     cv2.imwrite(output_path, cropped_image)
     
     return {"x": x, "y": y, "width": w, "height": h}
+
+# Add these new functions for the masthead generation feature
+async def download_image_from_url(url):
+    """
+    Download an image from a URL and return it as bytes
+    """
+    response = requests.get(url, stream=True)
+    response.raise_for_status()
+    return response.content
+
+async def download_from_google_drive(drive_url):
+    """
+    Download a file from Google Drive
+    """
+    try:
+        # Extract the file ID from the URL
+        file_id = re.search(r'id=([^&]+)', drive_url)
+        if not file_id:
+            raise ValueError("Invalid Google Drive URL format")
+        
+        file_id = file_id.group(1)
+        direct_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+        
+        response = requests.get(direct_url, stream=True)
+        response.raise_for_status()
+        return response.content
+    except Exception as e:
+        print(f"Error downloading from Google Drive: {str(e)}")
+        raise
+
+async def process_masthead_item(item, index):
+    """
+    Process a single masthead item by calling other features
+    """
+    try:
+        result = {
+            "id": index,
+            "brand_name": item.get("Brand Name", ""),
+            "copy_line_1": item.get("Copy Line 1", ""),
+            "copy_line_2": item.get("Copy Line 2", "")
+        }
+        
+        # 1. Process product images to get base color
+        if "product1" in item and "product2" in item:
+            product1_url = item["product1"].get("image_url", "")
+            product2_url = item["product2"].get("image_url", "")
+            
+            if product1_url and product2_url:
+                # Download product images
+                product1_content = await download_image_from_url(product1_url)
+                product2_content = await download_image_from_url(product2_url)
+                
+                # Save them temporarily
+                product1_path = os.path.join(TEMP_DIR, f"temp_product1_{index}.png")
+                product2_path = os.path.join(TEMP_DIR, f"temp_product2_{index}.png")
+                
+                with open(product1_path, "wb") as f:
+                    f.write(product1_content)
+                
+                with open(product2_path, "wb") as f:
+                    f.write(product2_content)
+                
+                # Extract colors from both images
+                colors1 = extract_colors(product1_path)
+                colors2 = extract_colors(product2_path)
+                
+                # Merge color palettes and determine hierarchy
+                merged_colors = merge_color_palettes(colors1, colors2)
+                
+                # Get the base color
+                base_color = merged_colors["base_color"]
+                
+                # Convert RGB to hex
+                hex_color = "#{:02X}{:02X}{:02X}".format(base_color[0], base_color[1], base_color[2])
+                
+                result["base_color"] = hex_color
+                
+                # Clean up temp files
+                os.remove(product1_path)
+                os.remove(product2_path)
+        
+        # 2. Process logo to extract and crop
+        logo_url = item.get("Logo drive link (Transparent PNG)", "")
+        if logo_url:
+            try:
+                # Download logo from Google Drive
+                logo_content = await download_from_google_drive(logo_url)
+                
+                # Save temporarily
+                logo_input_path = os.path.join(TEMP_DIR, f"temp_logo_input_{index}.png")
+                logo_output_path = os.path.join(TEMP_DIR, f"extracted_logo_{index}.png")
+                
+                with open(logo_input_path, "wb") as f:
+                    f.write(logo_content)
+                
+                # Crop logo to visible pixels
+                crop_info = crop_to_visible_pixels(logo_input_path, logo_output_path)
+                
+                # Get logo dimensions
+                image = Image.open(logo_output_path)
+                width, height = image.size
+                
+                # Construct logo URL for retrieval
+                result["logo"] = {
+                    "url": f"/get-masthead-logo/{index}",
+                    "dimensions": {
+                        "width": width,
+                        "height": height
+                    },
+                    "crop_info": crop_info
+                }
+                
+                # Keep the logo in memory for retrieval
+                # We'll store the path instead of the content for efficiency
+                result["_logo_path"] = logo_output_path
+                
+                # Clean up temp input file
+                os.remove(logo_input_path)
+            except Exception as logo_error:
+                print(f"Error processing logo: {str(logo_error)}")
+                result["logo_error"] = str(logo_error)
+        
+        return result
+    except Exception as e:
+        print(f"Error processing masthead item {index}: {str(e)}")
+        return {
+            "id": index,
+            "error": str(e),
+            "brand_name": item.get("Brand Name", ""),
+            "copy_line_1": item.get("Copy Line 1", ""),
+            "copy_line_2": item.get("Copy Line 2", "")
+        }
+
+@app.post("/generate-mastheads/")
+async def generate_mastheads(request: Request):
+    """
+    Master endpoint that processes multiple mastheads at once, integrating
+    product image processing, logo extraction, and text handling.
+    """
+    try:
+        global processed_mastheads
+        
+        # Parse request body
+        body = await request.json()
+        
+        if not isinstance(body, list):
+            raise HTTPException(
+                status_code=400, 
+                detail="Request body must be an array of masthead data"
+            )
+        
+        # Process each masthead item
+        results = []
+        for i, item in enumerate(body):
+            result = await process_masthead_item(item, i)
+            results.append(result)
+        
+        # Store the processed results
+        processed_mastheads = results
+        
+        # Return success response with processed data
+        return {
+            "success": True,
+            "message": f"Successfully processed {len(results)} mastheads",
+            "mastheads": [
+                {
+                    k: v for k, v in masthead.items() 
+                    if not k.startswith('_')  # Exclude fields starting with _
+                } 
+                for masthead in results
+            ]
+        }
+    except Exception as e:
+        print(f"Error in generate_mastheads: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/get-mastheads/")
+async def get_mastheads():
+    """
+    Retrieve all processed mastheads
+    """
+    global processed_mastheads
+    
+    if not processed_mastheads:
+        return {
+            "success": False,
+            "message": "No mastheads have been processed yet",
+            "mastheads": []
+        }
+    
+    # Return all mastheads without internal fields
+    return {
+        "success": True,
+        "message": f"Retrieved {len(processed_mastheads)} mastheads",
+        "mastheads": [
+            {
+                k: v for k, v in masthead.items() 
+                if not k.startswith('_')  # Exclude fields starting with _
+            } 
+            for masthead in processed_mastheads
+        ]
+    }
+
+@app.get("/get-masthead/{masthead_id}")
+async def get_masthead(masthead_id: int):
+    """
+    Retrieve a specific processed masthead by ID
+    """
+    global processed_mastheads
+    
+    if not processed_mastheads:
+        raise HTTPException(
+            status_code=404, 
+            detail="No mastheads have been processed yet"
+        )
+    
+    for masthead in processed_mastheads:
+        if masthead.get("id") == masthead_id:
+            # Return masthead without internal fields
+            return {
+                k: v for k, v in masthead.items() 
+                if not k.startswith('_')  # Exclude fields starting with _
+            }
+    
+    raise HTTPException(
+        status_code=404, 
+        detail=f"Masthead with ID {masthead_id} not found"
+    )
+
+@app.get("/get-masthead-logo/{masthead_id}")
+async def get_masthead_logo(masthead_id: int):
+    """
+    Retrieve the extracted logo for a specific masthead
+    """
+    global processed_mastheads
+    
+    if not processed_mastheads:
+        raise HTTPException(
+            status_code=404, 
+            detail="No mastheads have been processed yet"
+        )
+    
+    for masthead in processed_mastheads:
+        if masthead.get("id") == masthead_id and "_logo_path" in masthead:
+            logo_path = masthead["_logo_path"]
+            
+            if os.path.exists(logo_path):
+                return FileResponse(
+                    logo_path, 
+                    media_type="image/png", 
+                    filename=f"logo_{masthead_id}.png"
+                )
+    
+    raise HTTPException(
+        status_code=404, 
+        detail=f"Logo for masthead with ID {masthead_id} not found"
+    )
