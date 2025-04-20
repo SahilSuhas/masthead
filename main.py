@@ -507,11 +507,34 @@ def extract_svg_polygon(svg_content: bytes, width: int = 1440, height: int = 102
         import re
         svg_text = svg_content.decode('utf-8')
         
+        print(f"Processing SVG with length: {len(svg_text)} bytes")
+        
         # Look for path data - this will help with complex SVGs from Figma
         path_match = re.search(r'<path[^>]*d=["\'](.*?)["\']', svg_text)
         
         if path_match:
             print("Found SVG path data - could use this for more precise polygon extraction")
+        
+        # Look for rect elements for simple rectangle SVGs
+        rect_match = re.search(r'<rect[^>]*x=["\'](.*?)["\'].*?y=["\'](.*?)["\'].*?width=["\'](.*?)["\'].*?height=["\'](.*?)["\']', svg_text, re.DOTALL)
+        if rect_match:
+            print("Found rectangle in SVG")
+            try:
+                x = float(rect_match.group(1))
+                y = float(rect_match.group(2))
+                w = float(rect_match.group(3))
+                h = float(rect_match.group(4))
+                # Create a simple rectangle polygon
+                rect_polygon = [
+                    [int(x), int(y)],
+                    [int(x + w), int(y)],
+                    [int(x + w), int(y + h)],
+                    [int(x), int(y + h)]
+                ]
+                print(f"Created rectangle polygon from SVG rect: {rect_polygon}")
+                return rect_polygon
+            except Exception as rect_err:
+                print(f"Error extracting rectangle data: {rect_err}")
         
         # Convert SVG to mask
         mask = convert_svg_to_mask(svg_content, width, height)
@@ -534,6 +557,7 @@ def extract_svg_polygon(svg_content: bytes, width: int = 1440, height: int = 102
             # If no contours found, create a simple rectangle
             print("No contours found, creating fallback rectangle")
             polygon = [[50, 50], [width-50, 50], [width-50, height-50], [50, height-50]]
+            print(f"Created fallback rectangle: {polygon}")
             return polygon
         
         # Create a visualization of all contours for debugging
@@ -577,6 +601,13 @@ def extract_svg_polygon(svg_content: bytes, width: int = 1440, height: int = 102
         # Convert to list of [x, y] points
         polygon = [list(map(int, point[0])) for point in approx_poly]
         
+        # Debug: print the polygon points
+        print(f"Extracted polygon with {len(polygon)} points:")
+        for i, p in enumerate(polygon[:5]):  # Print first 5 points for debugging
+            print(f"  Point {i}: {p}")
+        if len(polygon) > 5:
+            print(f"  ... and {len(polygon)-5} more points")
+        
         # Debug: save contour visualization
         contour_vis = np.zeros((height, width, 3), dtype=np.uint8)
         cv2.drawContours(contour_vis, [main_contour], -1, (0, 255, 0), 2)
@@ -593,7 +624,9 @@ def extract_svg_polygon(svg_content: bytes, width: int = 1440, height: int = 102
     except Exception as e:
         print(f"Error in extract_svg_polygon: {str(e)}")
         # Return a default rectangle as fallback
-        return [[50, 50], [width-50, 50], [width-50, height-50], [50, height-50]]
+        fallback = [[50, 50], [width-50, 50], [width-50, height-50], [50, height-50]]
+        print(f"Returning fallback rectangle due to error: {fallback}")
+        return fallback
 
 def get_visible_content_bbox(image_path: str) -> Tuple[int, int, int, int]:
     """Get the bounding box of visible (non-transparent) content in a PNG."""
@@ -993,7 +1026,34 @@ def calculate_product_placement(
     # Normalize and convert polygon to numpy array for easier processing
     try:
         # Ensure all points are exactly [x,y] format with integer values
-        normalized_points = [[int(point[0]), int(point[1])] for point in mask_polygon]
+        # Handle different possible formats of points (tuple, list, dict with x/y)
+        normalized_points = []
+        for point in mask_polygon:
+            try:
+                # If point is a sequence (list or tuple)
+                if isinstance(point, (list, tuple)) and len(point) >= 2:
+                    normalized_points.append([int(point[0]), int(point[1])])
+                # If point is a dict with 'x' and 'y' keys
+                elif isinstance(point, dict) and 'x' in point and 'y' in point:
+                    normalized_points.append([int(point['x']), int(point['y'])])
+                # If point has x and y attributes
+                elif hasattr(point, 'x') and hasattr(point, 'y'):
+                    normalized_points.append([int(point.x), int(point.y)])
+                # If point is a string like "x,y"
+                elif isinstance(point, str) and ',' in point:
+                    x, y = point.split(',', 1)
+                    normalized_points.append([int(x.strip()), int(y.strip())])
+                else:
+                    print(f"Unrecognized point format: {type(point)} - {point}")
+                    raise ValueError(f"Unrecognized point format: {point}")
+            except Exception as e:
+                print(f"Error processing point {point}: {e}")
+                raise
+        
+        # Ensure we have at least 3 points for a polygon
+        if len(normalized_points) < 3:
+            raise ValueError(f"Not enough points for a polygon: {len(normalized_points)}")
+            
         polygon_points = np.array(normalized_points, dtype=np.int32)
         print(f"Normalized polygon points shape: {polygon_points.shape}")
     except Exception as e:
