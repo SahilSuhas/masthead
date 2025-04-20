@@ -80,9 +80,9 @@ def extract_actual_bounding_box(image_path):
         if contours:
             x, y, w, h = cv2.boundingRect(contours[0])
             if w > 1 and h > 1:  # Ensure the bounding box is valid
-            aspect_ratio = round(w / h, 2)
-            size_category = "Tall" if h > w else "Wide" if w > h else "Compact"
-            return {"x": x, "y": y, "width": w, "height": h, "aspect_ratio": aspect_ratio, "size_category": size_category}
+                aspect_ratio = round(w / h, 2)
+                size_category = "Tall" if h > w else "Wide" if w > h else "Compact"
+                return {"x": x, "y": y, "width": w, "height": h, "aspect_ratio": aspect_ratio, "size_category": size_category}
 
     return {"x": 0, "y": 0, "width": 0, "height": 0, "aspect_ratio": 1, "size_category": "Unknown"}
 
@@ -150,7 +150,7 @@ def merge_color_palettes(colors1, colors2, image1_path=None, image2_path=None):
         
         # Combine both palettes
         merged = colors1 + colors2
-    unique_colors = list(set(merged))  # Remove duplicates
+        unique_colors = list(set(merged))  # Remove duplicates
 
         # Count frequency of each unique color across both images
         color_frequencies = {}
@@ -164,11 +164,11 @@ def merge_color_palettes(colors1, colors2, image1_path=None, image2_path=None):
         # Sort by frequency
         sorted_colors = sorted(unique_colors, key=lambda c: color_frequencies.get(c, 0), reverse=True)
 
-    return {
+        return {
             "base_color": sorted_colors[0] if sorted_colors else (128, 128, 128),  # The most frequent color
             "secondary_color": sorted_colors[1] if len(sorted_colors) > 1 else sorted_colors[0] if sorted_colors else (128, 128, 128),
-        "accent_colors": sorted_colors[2:] if len(sorted_colors) > 2 else []
-    }
+            "accent_colors": sorted_colors[2:] if len(sorted_colors) > 2 else []
+        }
     except Exception as e:
         print(f"Error in merge_color_palettes: {str(e)}")
         # Provide a fallback in case of any error
