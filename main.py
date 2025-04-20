@@ -1736,7 +1736,7 @@ async def place_products_in_svg(
         
         # Calculate product placement positions and sizes
         placement_data = calculate_product_placement(
-            product1_img, product2_img, mask, padding, bottom_offset, right_offset
+            product1_path, product2_path, polygon, canvas_width, canvas_height, padding, right_offset
         )
         
         if not placement_data:
