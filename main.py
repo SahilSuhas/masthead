@@ -126,31 +126,17 @@ def merge_color_palettes(colors1, colors2, image1_path=None, image2_path=None):
             image1 = Image.open(image1_path).convert("RGB").resize((100, 100))
             image2 = Image.open(image2_path).convert("RGB").resize((100, 100))
         else:
-            # Fallback to default paths for backward compatibility
-            default_path1 = os.path.join(TEMP_DIR, "temp_image1.png")
-            default_path2 = os.path.join(TEMP_DIR, "temp_image2.png")
+            # Fall back to default paths for backward compatibility
+            image1 = Image.open("temp_image1.png").convert("RGB").resize((100, 100))
+            image2 = Image.open("temp_image2.png").convert("RGB").resize((100, 100))
             
-            if os.path.exists(default_path1) and os.path.exists(default_path2):
-                image1 = Image.open(default_path1).convert("RGB").resize((100, 100))
-                image2 = Image.open(default_path2).convert("RGB").resize((100, 100))
-            else:
-                # If files don't exist, use simplified approach without frequency analysis
-                # Just combine the colors from both palettes
-                merged = colors1 + colors2
-                unique_colors = list(set(merged))
-                return {
-                    "base_color": colors1[0] if colors1 else (128, 128, 128),
-                    "secondary_color": colors2[0] if colors2 else (128, 128, 128),
-                    "accent_colors": unique_colors[2:5] if len(unique_colors) > 2 else []
-                }
-                
         pixels1 = np.array(image1).reshape(-1, 3)
         pixels2 = np.array(image2).reshape(-1, 3)
         all_pixels = np.vstack([pixels1, pixels2])
         
         # Combine both palettes
         merged = colors1 + colors2
-        unique_colors = list(set(merged))  # Remove duplicates
+    unique_colors = list(set(merged))  # Remove duplicates
 
         # Count frequency of each unique color across both images
         color_frequencies = {}
@@ -164,17 +150,17 @@ def merge_color_palettes(colors1, colors2, image1_path=None, image2_path=None):
         # Sort by frequency
         sorted_colors = sorted(unique_colors, key=lambda c: color_frequencies.get(c, 0), reverse=True)
 
-        return {
+    return {
             "base_color": sorted_colors[0] if sorted_colors else (128, 128, 128),  # The most frequent color
-            "secondary_color": sorted_colors[1] if len(sorted_colors) > 1 else sorted_colors[0] if sorted_colors else (128, 128, 128),
+            "secondary_color": sorted_colors[1] if len(sorted_colors) > 1 else (200, 200, 200),
             "accent_colors": sorted_colors[2:] if len(sorted_colors) > 2 else []
-        }
+    }
     except Exception as e:
         print(f"Error in merge_color_palettes: {str(e)}")
         # Provide a fallback in case of any error
         return {
             "base_color": colors1[0] if colors1 else (128, 128, 128),
-            "secondary_color": colors2[0] if colors2 else (128, 128, 128),
+            "secondary_color": colors2[0] if colors2 else (200, 200, 200),
             "accent_colors": []
         }
 
@@ -507,34 +493,11 @@ def extract_svg_polygon(svg_content: bytes, width: int = 1440, height: int = 102
         import re
         svg_text = svg_content.decode('utf-8')
         
-        print(f"Processing SVG with length: {len(svg_text)} bytes")
-        
         # Look for path data - this will help with complex SVGs from Figma
         path_match = re.search(r'<path[^>]*d=["\'](.*?)["\']', svg_text)
         
         if path_match:
             print("Found SVG path data - could use this for more precise polygon extraction")
-        
-        # Look for rect elements for simple rectangle SVGs
-        rect_match = re.search(r'<rect[^>]*x=["\'](.*?)["\'].*?y=["\'](.*?)["\'].*?width=["\'](.*?)["\'].*?height=["\'](.*?)["\']', svg_text, re.DOTALL)
-        if rect_match:
-            print("Found rectangle in SVG")
-            try:
-                x = float(rect_match.group(1))
-                y = float(rect_match.group(2))
-                w = float(rect_match.group(3))
-                h = float(rect_match.group(4))
-                # Create a simple rectangle polygon
-                rect_polygon = [
-                    [int(x), int(y)],
-                    [int(x + w), int(y)],
-                    [int(x + w), int(y + h)],
-                    [int(x), int(y + h)]
-                ]
-                print(f"Created rectangle polygon from SVG rect: {rect_polygon}")
-                return rect_polygon
-            except Exception as rect_err:
-                print(f"Error extracting rectangle data: {rect_err}")
         
         # Convert SVG to mask
         mask = convert_svg_to_mask(svg_content, width, height)
@@ -557,7 +520,6 @@ def extract_svg_polygon(svg_content: bytes, width: int = 1440, height: int = 102
             # If no contours found, create a simple rectangle
             print("No contours found, creating fallback rectangle")
             polygon = [[50, 50], [width-50, 50], [width-50, height-50], [50, height-50]]
-            print(f"Created fallback rectangle: {polygon}")
             return polygon
         
         # Create a visualization of all contours for debugging
@@ -601,13 +563,6 @@ def extract_svg_polygon(svg_content: bytes, width: int = 1440, height: int = 102
         # Convert to list of [x, y] points
         polygon = [list(map(int, point[0])) for point in approx_poly]
         
-        # Debug: print the polygon points
-        print(f"Extracted polygon with {len(polygon)} points:")
-        for i, p in enumerate(polygon[:5]):  # Print first 5 points for debugging
-            print(f"  Point {i}: {p}")
-        if len(polygon) > 5:
-            print(f"  ... and {len(polygon)-5} more points")
-        
         # Debug: save contour visualization
         contour_vis = np.zeros((height, width, 3), dtype=np.uint8)
         cv2.drawContours(contour_vis, [main_contour], -1, (0, 255, 0), 2)
@@ -624,9 +579,7 @@ def extract_svg_polygon(svg_content: bytes, width: int = 1440, height: int = 102
     except Exception as e:
         print(f"Error in extract_svg_polygon: {str(e)}")
         # Return a default rectangle as fallback
-        fallback = [[50, 50], [width-50, 50], [width-50, height-50], [50, height-50]]
-        print(f"Returning fallback rectangle due to error: {fallback}")
-        return fallback
+        return [[50, 50], [width-50, 50], [width-50, height-50], [50, height-50]]
 
 def get_visible_content_bbox(image_path: str) -> Tuple[int, int, int, int]:
     """Get the bounding box of visible (non-transparent) content in a PNG."""
@@ -1023,49 +976,8 @@ def calculate_product_placement(
     Parameters:
         right_offset: Offset from the right edge, larger values move products toward center
     """
-    # Normalize and convert polygon to numpy array for easier processing
-    try:
-        # Ensure all points are exactly [x,y] format with integer values
-        # Handle different possible formats of points (tuple, list, dict with x/y)
-        normalized_points = []
-        for point in mask_polygon:
-            try:
-                # If point is a sequence (list or tuple)
-                if isinstance(point, (list, tuple)) and len(point) >= 2:
-                    normalized_points.append([int(point[0]), int(point[1])])
-                # If point is a dict with 'x' and 'y' keys
-                elif isinstance(point, dict) and 'x' in point and 'y' in point:
-                    normalized_points.append([int(point['x']), int(point['y'])])
-                # If point has x and y attributes
-                elif hasattr(point, 'x') and hasattr(point, 'y'):
-                    normalized_points.append([int(point.x), int(point.y)])
-                # If point is a string like "x,y"
-                elif isinstance(point, str) and ',' in point:
-                    x, y = point.split(',', 1)
-                    normalized_points.append([int(x.strip()), int(y.strip())])
-                else:
-                    print(f"Unrecognized point format: {type(point)} - {point}")
-                    raise ValueError(f"Unrecognized point format: {point}")
-            except Exception as e:
-                print(f"Error processing point {point}: {e}")
-                raise
-        
-        # Ensure we have at least 3 points for a polygon
-        if len(normalized_points) < 3:
-            raise ValueError(f"Not enough points for a polygon: {len(normalized_points)}")
-            
-        polygon_points = np.array(normalized_points, dtype=np.int32)
-        print(f"Normalized polygon points shape: {polygon_points.shape}")
-    except Exception as e:
-        print(f"Error normalizing polygon points: {str(e)}")
-        # Create a fallback rectangle as polygon
-        polygon_points = np.array([
-            [50, 50], 
-            [canvas_width-50, 50], 
-            [canvas_width-50, canvas_height-50], 
-            [50, canvas_height-50]
-        ], dtype=np.int32)
-        print("Using fallback rectangle for polygon")
+    # Convert polygon to numpy array for easier processing
+    polygon_points = np.array(mask_polygon)
     
     # 1. Get the bounding box of the mask polygon
     min_x, min_y = np.min(polygon_points, axis=0)
@@ -1800,30 +1712,27 @@ async def place_products_in_svg(
         # Extract polygon from SVG for visualizing the safe zone
         try:
             polygon = extract_svg_polygon(svg_path, mask)
-            print(f"Extracted polygon type: {type(polygon)}, length: {len(polygon)}")
-            for i, p in enumerate(polygon[:3]):
-                print(f"Polygon point {i}: {type(p)}, value: {p}")
         except Exception as e:
             print(f"Error extracting polygon from SVG: {str(e)}")
-            # Create a fallback polygon
-            polygon = [[50, 50], [mask.shape[1]-50, 50], [mask.shape[1]-50, mask.shape[0]-50], [50, mask.shape[0]-50]]
-            print(f"Using fallback polygon: {polygon}")
+            polygon = []
         
         # Calculate dimensions for the canvas
         canvas_width = mask.shape[1]
         canvas_height = mask.shape[0]
         
         # Calculate product placement positions and sizes
-        try:
-            placement_data = calculate_product_placement(
-                product1_path, product2_path, polygon, canvas_width, canvas_height, padding, right_offset
-            )
-            
-            if not placement_data:
-                raise HTTPException(status_code=400, detail="Could not calculate suitable product placement")
-        except Exception as e:
-            print(f"Error in calculate_product_placement: {str(e)}")
-            raise HTTPException(status_code=500, detail=f"Error calculating product placement: {str(e)}")
+        placement_data = calculate_product_placement(
+            product1_path, 
+            product2_path, 
+            polygon, 
+            canvas_width, 
+            canvas_height,
+            padding, 
+            right_offset
+        )
+        
+        if not placement_data:
+            raise HTTPException(status_code=400, detail="Could not calculate suitable product placement")
         
         # Create a visualization of the result
         visualization = np.zeros((canvas_height, canvas_width, 4), dtype=np.uint8)
@@ -1835,105 +1744,76 @@ async def place_products_in_svg(
                     visualization[y, x] = [200, 200, 200, 100]  # Light gray with transparency
         
         # Draw the two products on the visualization
-        try:
-            p1_x = placement_data["product1"]["x"]
-            p1_y = placement_data["product1"]["y"]
-            p1_width = placement_data["product1"]["width"]
-            p1_height = placement_data["product1"]["height"]
-            
-            p2_x = placement_data["product2"]["x"]
-            p2_y = placement_data["product2"]["y"]
-            p2_width = placement_data["product2"]["width"]
-            p2_height = placement_data["product2"]["height"]
-            
-            # Resize products for visualization
-            product1_resized = cv2.resize(product1_img, (p1_width, p1_height))
-            product2_resized = cv2.resize(product2_img, (p2_width, p2_height))
-            
-            # Draw products on visualization
-            for y in range(p1_height):
-                for x in range(p1_width):
-                    if y + p1_y < canvas_height and x + p1_x < canvas_width:
-                        alpha = product1_resized[y, x, 3] / 255.0 if product1_resized.shape[-1] == 4 else 1.0
-                        if alpha > 0:
-                            visualization[y + p1_y, x + p1_x] = [
-                                product1_resized[y, x, 0],
-                                product1_resized[y, x, 1],
-                                product1_resized[y, x, 2],
-                                int(alpha * 255)
-                            ]
-            
-            for y in range(p2_height):
-                for x in range(p2_width):
-                    if y + p2_y < canvas_height and x + p2_x < canvas_width:
-                        alpha = product2_resized[y, x, 3] / 255.0 if product2_resized.shape[-1] == 4 else 1.0
-                        if alpha > 0:
-                            visualization[y + p2_y, x + p2_x] = [
-                                product2_resized[y, x, 0],
-                                product2_resized[y, x, 1],
-                                product2_resized[y, x, 2],
-                                int(alpha * 255)
-                            ]
-        except Exception as e:
-            print(f"Error drawing products: {str(e)}")
+        p1_x = placement_data["product1"]["x"]
+        p1_y = placement_data["product1"]["y"]
+        p1_width = placement_data["product1"]["width"]
+        p1_height = placement_data["product1"]["height"]
+        
+        p2_x = placement_data["product2"]["x"]
+        p2_y = placement_data["product2"]["y"]
+        p2_width = placement_data["product2"]["width"]
+        p2_height = placement_data["product2"]["height"]
+        
+        # Resize products for visualization
+        product1_resized = cv2.resize(product1_img, (p1_width, p1_height))
+        product2_resized = cv2.resize(product2_img, (p2_width, p2_height))
+        
+        # Draw products on visualization
+        for y in range(p1_height):
+            for x in range(p1_width):
+                if y + p1_y < canvas_height and x + p1_x < canvas_width:
+                    alpha = product1_resized[y, x, 3] / 255.0 if product1_resized.shape[-1] == 4 else 1.0
+                    if alpha > 0:
+                        visualization[y + p1_y, x + p1_x] = [
+                            product1_resized[y, x, 0],
+                            product1_resized[y, x, 1],
+                            product1_resized[y, x, 2],
+                            int(alpha * 255)
+                        ]
+        
+        for y in range(p2_height):
+            for x in range(p2_width):
+                if y + p2_y < canvas_height and x + p2_x < canvas_width:
+                    alpha = product2_resized[y, x, 3] / 255.0 if product2_resized.shape[-1] == 4 else 1.0
+                    if alpha > 0:
+                        visualization[y + p2_y, x + p2_x] = [
+                            product2_resized[y, x, 0],
+                            product2_resized[y, x, 1],
+                            product2_resized[y, x, 2],
+                            int(alpha * 255)
+                        ]
         
         # Draw polygon outline (the safe zone) on visualization
-        try:
-            if polygon and len(polygon) > 2:
-                print("Drawing polygon outline...")
-                # Create a copy of the polygon points to ensure they're all [int, int] format
-                safe_points = []
-                for point in polygon:
-                    # Ensure point is a sequence and has at least 2 elements
-                    if isinstance(point, (list, tuple)) and len(point) >= 2:
-                        # Convert to integers
-                        safe_points.append((int(point[0]), int(point[1])))
-                
-                # Draw lines between consecutive points
-                for i in range(len(safe_points) - 1):
-                    pt1 = safe_points[i]
-                    pt2 = safe_points[i+1]
-                    cv2.line(visualization, pt1, pt2, (255, 0, 0, 255), 2)
-                
-                # Close the polygon
-                if len(safe_points) > 2:
-                    cv2.line(visualization, 
-                            safe_points[-1], 
-                            safe_points[0], 
-                            (255, 0, 0, 255), 2)
-                    
-                print(f"Drew polygon with {len(safe_points)} points")
-            else:
-                print("Skipping polygon outline - not enough points")
-        except Exception as e:
-            print(f"Error drawing polygon outline: {str(e)}")
+        if polygon:
+            for i in range(len(polygon) - 1):
+                pt1 = (int(polygon[i][0]), int(polygon[i][1]))
+                pt2 = (int(polygon[i+1][0]), int(polygon[i+1][1]))
+                cv2.line(visualization, pt1, pt2, (255, 0, 0, 255), 2)
+            # Close the polygon
+            cv2.line(visualization, 
+                    (int(polygon[-1][0]), int(polygon[-1][1])), 
+                    (int(polygon[0][0]), int(polygon[0][1])), 
+                    (255, 0, 0, 255), 2)
         
         # Draw bounding box of products with different colors
-        try:
-            cv2.rectangle(visualization, (p1_x, p1_y), (p1_x + p1_width, p1_y + p1_height), (0, 255, 0, 255), 2)
-            cv2.rectangle(visualization, (p2_x, p2_y), (p2_x + p2_width, p2_y + p2_height), (0, 0, 255, 255), 2)
-        except Exception as e:
-            print(f"Error drawing product bounding boxes: {str(e)}")
+        cv2.rectangle(visualization, (p1_x, p1_y), (p1_x + p1_width, p1_y + p1_height), (0, 255, 0, 255), 2)
+        cv2.rectangle(visualization, (p2_x, p2_y), (p2_x + p2_width, p2_y + p2_height), (0, 0, 255, 255), 2)
         
         # Save visualization
         visualization_path = os.path.join(TEMP_DIR, "product_placement_visualization.png")
         cv2.imwrite(visualization_path, visualization)
         
         # Create vector shape of pixel overlap
-        try:
-            vector_result = create_overlap_vector_shape(
-                product1_resized,
-                product2_resized,
-                p1_x,
-                p1_y,
-                p2_x,
-                p2_y,
-                canvas_width,
-                canvas_height
-            )
-        except Exception as e:
-            print(f"Error creating overlap vector shape: {str(e)}")
-            vector_result = {"svg_path": "", "base_svg_path": "", "overlap_percentage": 0}
+        vector_result = create_overlap_vector_shape(
+            product1_resized,
+            product2_resized,
+            p1_x,
+            p1_y,
+            p2_x,
+            p2_y,
+            canvas_width,
+            canvas_height
+        )
         
         # Return the placement data and visualization path
         return {
@@ -1943,8 +1823,8 @@ async def place_products_in_svg(
                 "width": canvas_width,
                 "height": canvas_height
             },
-            "overlap_vector": vector_result.get("svg_path", ""),
-            "base_vector": vector_result.get("base_svg_path", ""),
+            "overlap_vector": vector_result.get("svg_path"),
+            "base_vector": vector_result.get("base_svg_path"),
             "overlap_percentage": vector_result.get("overlap_percentage", 0)
         }
     
