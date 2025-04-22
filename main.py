@@ -1800,21 +1800,30 @@ async def place_products_in_svg(
         # Extract polygon from SVG for visualizing the safe zone
         try:
             polygon = extract_svg_polygon(svg_path, mask)
+            print(f"Extracted polygon type: {type(polygon)}, length: {len(polygon)}")
+            for i, p in enumerate(polygon[:3]):
+                print(f"Polygon point {i}: {type(p)}, value: {p}")
         except Exception as e:
             print(f"Error extracting polygon from SVG: {str(e)}")
-            polygon = []
+            # Create a fallback polygon
+            polygon = [[50, 50], [mask.shape[1]-50, 50], [mask.shape[1]-50, mask.shape[0]-50], [50, mask.shape[0]-50]]
+            print(f"Using fallback polygon: {polygon}")
         
         # Calculate dimensions for the canvas
         canvas_width = mask.shape[1]
         canvas_height = mask.shape[0]
         
         # Calculate product placement positions and sizes
-        placement_data = calculate_product_placement(
-            product1_path, product2_path, polygon, canvas_width, canvas_height, padding, right_offset
-        )
-        
-        if not placement_data:
-            raise HTTPException(status_code=400, detail="Could not calculate suitable product placement")
+        try:
+            placement_data = calculate_product_placement(
+                product1_path, product2_path, polygon, canvas_width, canvas_height, padding, right_offset
+            )
+            
+            if not placement_data:
+                raise HTTPException(status_code=400, detail="Could not calculate suitable product placement")
+        except Exception as e:
+            print(f"Error in calculate_product_placement: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Error calculating product placement: {str(e)}")
         
         # Create a visualization of the result
         visualization = np.zeros((canvas_height, canvas_width, 4), dtype=np.uint8)
@@ -1826,76 +1835,105 @@ async def place_products_in_svg(
                     visualization[y, x] = [200, 200, 200, 100]  # Light gray with transparency
         
         # Draw the two products on the visualization
-        p1_x = placement_data["product1"]["x"]
-        p1_y = placement_data["product1"]["y"]
-        p1_width = placement_data["product1"]["width"]
-        p1_height = placement_data["product1"]["height"]
-        
-        p2_x = placement_data["product2"]["x"]
-        p2_y = placement_data["product2"]["y"]
-        p2_width = placement_data["product2"]["width"]
-        p2_height = placement_data["product2"]["height"]
-        
-        # Resize products for visualization
-        product1_resized = cv2.resize(product1_img, (p1_width, p1_height))
-        product2_resized = cv2.resize(product2_img, (p2_width, p2_height))
-        
-        # Draw products on visualization
-        for y in range(p1_height):
-            for x in range(p1_width):
-                if y + p1_y < canvas_height and x + p1_x < canvas_width:
-                    alpha = product1_resized[y, x, 3] / 255.0 if product1_resized.shape[-1] == 4 else 1.0
-                    if alpha > 0:
-                        visualization[y + p1_y, x + p1_x] = [
-                            product1_resized[y, x, 0],
-                            product1_resized[y, x, 1],
-                            product1_resized[y, x, 2],
-                            int(alpha * 255)
-                        ]
-        
-        for y in range(p2_height):
-            for x in range(p2_width):
-                if y + p2_y < canvas_height and x + p2_x < canvas_width:
-                    alpha = product2_resized[y, x, 3] / 255.0 if product2_resized.shape[-1] == 4 else 1.0
-                    if alpha > 0:
-                        visualization[y + p2_y, x + p2_x] = [
-                            product2_resized[y, x, 0],
-                            product2_resized[y, x, 1],
-                            product2_resized[y, x, 2],
-                            int(alpha * 255)
-                        ]
+        try:
+            p1_x = placement_data["product1"]["x"]
+            p1_y = placement_data["product1"]["y"]
+            p1_width = placement_data["product1"]["width"]
+            p1_height = placement_data["product1"]["height"]
+            
+            p2_x = placement_data["product2"]["x"]
+            p2_y = placement_data["product2"]["y"]
+            p2_width = placement_data["product2"]["width"]
+            p2_height = placement_data["product2"]["height"]
+            
+            # Resize products for visualization
+            product1_resized = cv2.resize(product1_img, (p1_width, p1_height))
+            product2_resized = cv2.resize(product2_img, (p2_width, p2_height))
+            
+            # Draw products on visualization
+            for y in range(p1_height):
+                for x in range(p1_width):
+                    if y + p1_y < canvas_height and x + p1_x < canvas_width:
+                        alpha = product1_resized[y, x, 3] / 255.0 if product1_resized.shape[-1] == 4 else 1.0
+                        if alpha > 0:
+                            visualization[y + p1_y, x + p1_x] = [
+                                product1_resized[y, x, 0],
+                                product1_resized[y, x, 1],
+                                product1_resized[y, x, 2],
+                                int(alpha * 255)
+                            ]
+            
+            for y in range(p2_height):
+                for x in range(p2_width):
+                    if y + p2_y < canvas_height and x + p2_x < canvas_width:
+                        alpha = product2_resized[y, x, 3] / 255.0 if product2_resized.shape[-1] == 4 else 1.0
+                        if alpha > 0:
+                            visualization[y + p2_y, x + p2_x] = [
+                                product2_resized[y, x, 0],
+                                product2_resized[y, x, 1],
+                                product2_resized[y, x, 2],
+                                int(alpha * 255)
+                            ]
+        except Exception as e:
+            print(f"Error drawing products: {str(e)}")
         
         # Draw polygon outline (the safe zone) on visualization
-        if polygon:
-            for i in range(len(polygon) - 1):
-                pt1 = (int(polygon[i][0]), int(polygon[i][1]))
-                pt2 = (int(polygon[i+1][0]), int(polygon[i+1][1]))
-                cv2.line(visualization, pt1, pt2, (255, 0, 0, 255), 2)
-            # Close the polygon
-            cv2.line(visualization, 
-                    (int(polygon[-1][0]), int(polygon[-1][1])), 
-                    (int(polygon[0][0]), int(polygon[0][1])), 
-                    (255, 0, 0, 255), 2)
+        try:
+            if polygon and len(polygon) > 2:
+                print("Drawing polygon outline...")
+                # Create a copy of the polygon points to ensure they're all [int, int] format
+                safe_points = []
+                for point in polygon:
+                    # Ensure point is a sequence and has at least 2 elements
+                    if isinstance(point, (list, tuple)) and len(point) >= 2:
+                        # Convert to integers
+                        safe_points.append((int(point[0]), int(point[1])))
+                
+                # Draw lines between consecutive points
+                for i in range(len(safe_points) - 1):
+                    pt1 = safe_points[i]
+                    pt2 = safe_points[i+1]
+                    cv2.line(visualization, pt1, pt2, (255, 0, 0, 255), 2)
+                
+                # Close the polygon
+                if len(safe_points) > 2:
+                    cv2.line(visualization, 
+                            safe_points[-1], 
+                            safe_points[0], 
+                            (255, 0, 0, 255), 2)
+                    
+                print(f"Drew polygon with {len(safe_points)} points")
+            else:
+                print("Skipping polygon outline - not enough points")
+        except Exception as e:
+            print(f"Error drawing polygon outline: {str(e)}")
         
         # Draw bounding box of products with different colors
-        cv2.rectangle(visualization, (p1_x, p1_y), (p1_x + p1_width, p1_y + p1_height), (0, 255, 0, 255), 2)
-        cv2.rectangle(visualization, (p2_x, p2_y), (p2_x + p2_width, p2_y + p2_height), (0, 0, 255, 255), 2)
+        try:
+            cv2.rectangle(visualization, (p1_x, p1_y), (p1_x + p1_width, p1_y + p1_height), (0, 255, 0, 255), 2)
+            cv2.rectangle(visualization, (p2_x, p2_y), (p2_x + p2_width, p2_y + p2_height), (0, 0, 255, 255), 2)
+        except Exception as e:
+            print(f"Error drawing product bounding boxes: {str(e)}")
         
         # Save visualization
         visualization_path = os.path.join(TEMP_DIR, "product_placement_visualization.png")
         cv2.imwrite(visualization_path, visualization)
         
         # Create vector shape of pixel overlap
-        vector_result = create_overlap_vector_shape(
-            product1_resized,
-            product2_resized,
-            p1_x,
-            p1_y,
-            p2_x,
-            p2_y,
-            canvas_width,
-            canvas_height
-        )
+        try:
+            vector_result = create_overlap_vector_shape(
+                product1_resized,
+                product2_resized,
+                p1_x,
+                p1_y,
+                p2_x,
+                p2_y,
+                canvas_width,
+                canvas_height
+            )
+        except Exception as e:
+            print(f"Error creating overlap vector shape: {str(e)}")
+            vector_result = {"svg_path": "", "base_svg_path": "", "overlap_percentage": 0}
         
         # Return the placement data and visualization path
         return {
@@ -1905,8 +1943,8 @@ async def place_products_in_svg(
                 "width": canvas_width,
                 "height": canvas_height
             },
-            "overlap_vector": vector_result.get("svg_path"),
-            "base_vector": vector_result.get("base_svg_path"),
+            "overlap_vector": vector_result.get("svg_path", ""),
+            "base_vector": vector_result.get("base_svg_path", ""),
             "overlap_percentage": vector_result.get("overlap_percentage", 0)
         }
     
