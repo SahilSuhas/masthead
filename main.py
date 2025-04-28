@@ -966,7 +966,7 @@ def create_overlap_vector_shape(
             path_data += f"L {x},{y} "
     path_data += "Z"  # Close the path
     
-    # Add the overlap path with black fill, no stroke, and 100% opacity
+    # Add the path with styling
     svg_content += f'  <path d="{path_data}" fill="black" stroke="none" />\n'
     
     # Add coordinate data as metadata
