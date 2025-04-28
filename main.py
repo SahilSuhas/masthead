@@ -1797,7 +1797,7 @@ async def place_products_in_svg(
         canvas_height = mask.shape[0]
         
         # Calculate product placement positions and sizes
-        placement_data = calculate_product_placement(
+        placements, composed_img, overlap_data = calculate_product_placement(
             product1_path, 
             product2_path, 
             polygon, 
@@ -1807,8 +1807,24 @@ async def place_products_in_svg(
             right_offset
         )
         
-        if not placement_data:
+        if not placements:
             raise HTTPException(status_code=400, detail="Could not calculate suitable product placement")
+        
+        # Convert placement objects to dictionary format for API response
+        placement_data = {
+            "product1": {
+                "x": placements[0].position["x"],
+                "y": placements[0].position["y"],
+                "width": placements[0].size["width"],
+                "height": placements[0].size["height"]
+            },
+            "product2": {
+                "x": placements[1].position["x"],
+                "y": placements[1].position["y"],
+                "width": placements[1].size["width"],
+                "height": placements[1].size["height"]
+            }
+        }
         
         # Create a visualization of the result
         visualization = np.zeros((canvas_height, canvas_width, 4), dtype=np.uint8)
@@ -1879,17 +1895,8 @@ async def place_products_in_svg(
         visualization_path = os.path.join(TEMP_DIR, "product_placement_visualization.png")
         cv2.imwrite(visualization_path, visualization)
         
-        # Create vector shape of pixel overlap
-        vector_result = create_overlap_vector_shape(
-            product1_resized,
-            product2_resized,
-            p1_x,
-            p1_y,
-            p2_x,
-            p2_y,
-            canvas_width,
-            canvas_height
-        )
+        # Use the overlap_data directly from calculate_product_placement
+        vector_result = overlap_data
         
         # Return the placement data and visualization path
         return {
