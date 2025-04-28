@@ -119,9 +119,8 @@ def extract_colors(image_path, num_colors=5):
 
 def merge_color_palettes(colors1, colors2, image1_path=None, image2_path=None):
     """ Merges two color palettes and assigns hierarchy based on frequency """
-    # Get the original image to count actual frequencies
     try:
-        # Use provided image paths if given
+        # Get the original image to count actual frequencies
         if image1_path and image2_path and os.path.exists(image1_path) and os.path.exists(image2_path):
             image1 = Image.open(image1_path).convert("RGB").resize((100, 100))
             image2 = Image.open(image2_path).convert("RGB").resize((100, 100))
@@ -132,29 +131,53 @@ def merge_color_palettes(colors1, colors2, image1_path=None, image2_path=None):
             
         pixels1 = np.array(image1).reshape(-1, 3)
         pixels2 = np.array(image2).reshape(-1, 3)
-        all_pixels = np.vstack([pixels1, pixels2])
         
-        # Combine both palettes
-        merged = colors1 + colors2
-    unique_colors = list(set(merged))  # Remove duplicates
+        # Combine all colors from both palettes
+        combined_palette = []
+        combined_palette.extend(colors1)
+        combined_palette.extend(colors2)
+        
+        # Remove duplicates by converting to tuple for set operation
+        unique_colors = []
+        for color in combined_palette:
+            color_tuple = tuple(color)
+            if color_tuple not in [tuple(c) for c in unique_colors]:
+                unique_colors.append(color)
 
         # Count frequency of each unique color across both images
         color_frequencies = {}
         
         for color in unique_colors:
             # Calculate how close each pixel is to this color
-            distances = np.sum((all_pixels - np.array(color)) ** 2, axis=1)
-            # Count pixels that are close to this color (using a threshold)
-            color_frequencies[color] = np.sum(distances < 1000)  # Adjust threshold as needed
+            # For each color in our palette, find pixels that are closest to it
+            
+            color_np = np.array(color)
+            
+            # Calculate distance from each pixel in image1 to this color
+            distances1 = np.linalg.norm(pixels1 - color_np, axis=1)
+            closest_pixels1 = np.sum(distances1 < 30)  # Count pixels within threshold
+            
+            # Calculate distance from each pixel in image2 to this color
+            distances2 = np.linalg.norm(pixels2 - color_np, axis=1)
+            closest_pixels2 = np.sum(distances2 < 30)  # Count pixels within threshold
+            
+            # Total frequency is the sum from both images
+            total_frequency = closest_pixels1 + closest_pixels2
+            color_frequencies[tuple(color)] = total_frequency
         
-        # Sort by frequency
-        sorted_colors = sorted(unique_colors, key=lambda c: color_frequencies.get(c, 0), reverse=True)
-
-    return {
+        # Sort colors by frequency
+        sorted_colors = [color for color, _ in sorted(
+            color_frequencies.items(), 
+            key=lambda item: item[1], 
+            reverse=True
+        )]
+        
+        # Return dictionary with base color, secondary color, and accent colors
+        return {
             "base_color": sorted_colors[0] if sorted_colors else (128, 128, 128),  # The most frequent color
             "secondary_color": sorted_colors[1] if len(sorted_colors) > 1 else (200, 200, 200),
             "accent_colors": sorted_colors[2:] if len(sorted_colors) > 2 else []
-    }
+        }
     except Exception as e:
         print(f"Error in merge_color_palettes: {str(e)}")
         # Provide a fallback in case of any error
@@ -432,6 +455,26 @@ def convert_svg_to_mask(svg_content: bytes, width: int = 1440, height: int = 102
             svg_height = float(height_match.group(1))
         
         print(f"SVG dimensions: {svg_width}x{svg_height}")
+        
+        # Modify the SVG to ensure it has black fill, no stroke, and 100% opacity
+        # This will apply to all shapes in the SVG
+        svg_text = re.sub(r'fill=["\'](.*?)["\']', 'fill="black"', svg_text)
+        svg_text = re.sub(r'stroke=["\'](.*?)["\']', 'stroke="none"', svg_text)
+        svg_text = re.sub(r'opacity=["\'](.*?)["\']', 'opacity="1"', svg_text)
+        svg_text = re.sub(r'fill-opacity=["\'](.*?)["\']', 'fill-opacity="1"', svg_text)
+        
+        # If no fill attribute exists, add it to path and polygon elements
+        svg_text = re.sub(r'(<path[^>]*)(>)', r'\1 fill="black"\2', svg_text)
+        svg_text = re.sub(r'(<polygon[^>]*)(>)', r'\1 fill="black"\2', svg_text)
+        svg_text = re.sub(r'(<rect[^>]*)(>)', r'\1 fill="black"\2', svg_text)
+        
+        # Update the SVG content
+        svg_content = svg_text.encode('utf-8')
+        
+        # Save the modified SVG for debugging
+        modified_svg_path = os.path.join(TEMP_DIR, "modified_svg.svg")
+        with open(modified_svg_path, "wb") as f:
+            f.write(svg_content)
             
         with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
             # Convert SVG to PNG using cairosvg with proper dimensions
