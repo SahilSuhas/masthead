@@ -13,11 +13,20 @@ import base64
 import json
 from dataclasses import dataclass, field, asdict
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.encoders import jsonable_encoder
 import requests
 import re
 
-app = FastAPI()
+# Custom response class that properly handles NumPy types
+class NumpyJSONResponse(JSONResponse):
+    def render(self, content: Any) -> bytes:
+        # Convert NumPy types to Python native types before serializing
+        content = convert_numpy_to_python(content)
+        return super().render(content)
+
+# Initialize FastAPI with custom JSON response class
+app = FastAPI(default_response_class=NumpyJSONResponse)
 
 # Enable CORS for all origins (including Figma plugin)
 app.add_middleware(
@@ -1899,26 +1908,11 @@ async def place_products_in_svg(
         # Use the overlap_data directly from calculate_product_placement
         vector_result = overlap_data
         
-        # Convert all NumPy types to Python native types for JSON serialization
-        def convert_numpy_to_python(obj):
-            """Recursively convert NumPy types to Python native types."""
-            if isinstance(obj, np.ndarray):
-                return obj.tolist()
-            elif isinstance(obj, np.number):
-                return obj.item()
-            elif isinstance(obj, dict):
-                return {k: convert_numpy_to_python(v) for k, v in obj.items()}
-            elif isinstance(obj, list) or isinstance(obj, tuple):
-                return [convert_numpy_to_python(i) for i in obj]
-            else:
-                return obj
-        
-        # Safely extract values from vector_result, converting arrays to scalars if needed
+        # Safely extract values from vector_result
         def safe_get(dictionary, key, default=None):
             if not dictionary or not isinstance(dictionary, dict):
                 return default
-            value = dictionary.get(key, default)
-            return convert_numpy_to_python(value)
+            return dictionary.get(key, default)
         
         # Create the response payload
         response_payload = {
@@ -1934,7 +1928,7 @@ async def place_products_in_svg(
         }
         
         # Convert the entire response payload to Python native types for JSON serialization
-        return convert_numpy_to_python(response_payload)
+        return response_payload
     
     except Exception as e:
         print(f"Error in placing products: {str(e)}")
@@ -2420,3 +2414,17 @@ async def generate_mastheads_binary(
     except Exception as e:
         print(f"Error in generate_mastheads_binary: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+# Create a utility function for converting NumPy types to Python native types
+def convert_numpy_to_python(obj):
+    """Recursively convert NumPy types to Python native types."""
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, np.number):
+        return obj.item()
+    elif isinstance(obj, dict):
+        return {k: convert_numpy_to_python(v) for k, v in obj.items()}
+    elif isinstance(obj, list) or isinstance(obj, tuple):
+        return [convert_numpy_to_python(i) for i in obj]
+    else:
+        return obj
