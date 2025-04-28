@@ -604,7 +604,18 @@ def extract_svg_polygon(svg_content: bytes, width: int = 1440, height: int = 102
             approx_poly = cv2.approxPolyDP(main_contour, epsilon, True)
         
         # Convert to list of [x, y] points
-        polygon = [list(map(int, point[0])) for point in approx_poly]
+        # Ensure each point has exactly 2 dimensions (x, y)
+        polygon = []
+        for point in approx_poly:
+            if len(point) > 0 and len(point[0]) >= 2:
+                # Extract just the x and y coordinates
+                x, y = int(point[0][0]), int(point[0][1])
+                polygon.append([x, y])
+        
+        # If we couldn't extract valid points, use a fallback rectangle
+        if len(polygon) < 3:
+            print("Not enough valid polygon points, using fallback rectangle")
+            polygon = [[50, 50], [width-50, 50], [width-50, height-50], [50, height-50]]
         
         # Debug: save contour visualization
         contour_vis = np.zeros((height, width, 3), dtype=np.uint8)
@@ -1019,8 +1030,30 @@ def calculate_product_placement(
     Parameters:
         right_offset: Offset from the right edge, larger values move products toward center
     """
+    # Validate mask_polygon to ensure all points are valid
+    if not mask_polygon or len(mask_polygon) < 3:
+        # Create a default rectangle if mask polygon is invalid
+        print("Warning: Invalid mask polygon, using fallback rectangle")
+        mask_polygon = [[50, 50], [canvas_width-50, 50], [canvas_width-50, canvas_height-50], [50, canvas_height-50]]
+    
+    # Ensure each point has exactly 2 values (x, y)
+    valid_points = []
+    for point in mask_polygon:
+        if len(point) >= 2:
+            valid_points.append([int(point[0]), int(point[1])])
+    
+    if len(valid_points) < 3:
+        # If not enough valid points, use fallback
+        print("Warning: Not enough valid points in mask polygon, using fallback rectangle")
+        valid_points = [[50, 50], [canvas_width-50, 50], [canvas_width-50, canvas_height-50], [50, canvas_height-50]]
+    
     # Convert polygon to numpy array for easier processing
-    polygon_points = np.array(mask_polygon)
+    try:
+        polygon_points = np.array(valid_points)
+    except Exception as e:
+        print(f"Error converting polygon points to numpy array: {e}")
+        # Create a fallback rectangle
+        polygon_points = np.array([[50, 50], [canvas_width-50, 50], [canvas_width-50, canvas_height-50], [50, canvas_height-50]])
     
     # 1. Get the bounding box of the mask polygon
     min_x, min_y = np.min(polygon_points, axis=0)
