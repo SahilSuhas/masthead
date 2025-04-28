@@ -1898,6 +1898,16 @@ async def place_products_in_svg(
         # Use the overlap_data directly from calculate_product_placement
         vector_result = overlap_data
         
+        # Safely extract values from vector_result, converting arrays to scalars if needed
+        def safe_get(dictionary, key, default=None):
+            value = dictionary.get(key, default)
+            # Convert NumPy arrays to Python scalar if they're length-1
+            if isinstance(value, np.ndarray):
+                if value.size == 1:
+                    return value.item()  # Convert single-element array to scalar
+                return value.tolist()  # Convert multi-element array to list
+            return value
+        
         # Return the placement data and visualization path
         return {
             "placement": placement_data,
@@ -1906,9 +1916,9 @@ async def place_products_in_svg(
                 "width": canvas_width,
                 "height": canvas_height
             },
-            "overlap_vector": vector_result.get("svg_path"),
-            "base_vector": vector_result.get("base_svg_path"),
-            "overlap_percentage": vector_result.get("overlap_percentage", 0)
+            "overlap_vector": safe_get(vector_result, "svg_path"),
+            "base_vector": safe_get(vector_result, "base_svg_path"),
+            "overlap_percentage": safe_get(vector_result, "overlap_percentage", 0)
         }
     
     except Exception as e:
