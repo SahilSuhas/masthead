@@ -1811,18 +1811,19 @@ async def place_products_in_svg(
             raise HTTPException(status_code=400, detail="Could not calculate suitable product placement")
         
         # Convert placement objects to dictionary format for API response
+        # Ensure all values are Python native types, not NumPy types
         placement_data = {
             "product1": {
-                "x": placements[0].position["x"],
-                "y": placements[0].position["y"],
-                "width": placements[0].size["width"],
-                "height": placements[0].size["height"]
+                "x": int(placements[0].position["x"]) if isinstance(placements[0].position["x"], (np.number, np.ndarray)) else placements[0].position["x"],
+                "y": int(placements[0].position["y"]) if isinstance(placements[0].position["y"], (np.number, np.ndarray)) else placements[0].position["y"],
+                "width": int(placements[0].size["width"]) if isinstance(placements[0].size["width"], (np.number, np.ndarray)) else placements[0].size["width"],
+                "height": int(placements[0].size["height"]) if isinstance(placements[0].size["height"], (np.number, np.ndarray)) else placements[0].size["height"]
             },
             "product2": {
-                "x": placements[1].position["x"],
-                "y": placements[1].position["y"],
-                "width": placements[1].size["width"],
-                "height": placements[1].size["height"]
+                "x": int(placements[1].position["x"]) if isinstance(placements[1].position["x"], (np.number, np.ndarray)) else placements[1].position["x"],
+                "y": int(placements[1].position["y"]) if isinstance(placements[1].position["y"], (np.number, np.ndarray)) else placements[1].position["y"],
+                "width": int(placements[1].size["width"]) if isinstance(placements[1].size["width"], (np.number, np.ndarray)) else placements[1].size["width"],
+                "height": int(placements[1].size["height"]) if isinstance(placements[1].size["height"], (np.number, np.ndarray)) else placements[1].size["height"]
             }
         }
         
@@ -1898,18 +1899,29 @@ async def place_products_in_svg(
         # Use the overlap_data directly from calculate_product_placement
         vector_result = overlap_data
         
+        # Convert all NumPy types to Python native types for JSON serialization
+        def convert_numpy_to_python(obj):
+            """Recursively convert NumPy types to Python native types."""
+            if isinstance(obj, np.ndarray):
+                return obj.tolist()
+            elif isinstance(obj, np.number):
+                return obj.item()
+            elif isinstance(obj, dict):
+                return {k: convert_numpy_to_python(v) for k, v in obj.items()}
+            elif isinstance(obj, list) or isinstance(obj, tuple):
+                return [convert_numpy_to_python(i) for i in obj]
+            else:
+                return obj
+        
         # Safely extract values from vector_result, converting arrays to scalars if needed
         def safe_get(dictionary, key, default=None):
+            if not dictionary or not isinstance(dictionary, dict):
+                return default
             value = dictionary.get(key, default)
-            # Convert NumPy arrays to Python scalar if they're length-1
-            if isinstance(value, np.ndarray):
-                if value.size == 1:
-                    return value.item()  # Convert single-element array to scalar
-                return value.tolist()  # Convert multi-element array to list
-            return value
+            return convert_numpy_to_python(value)
         
-        # Return the placement data and visualization path
-        return {
+        # Create the response payload
+        response_payload = {
             "placement": placement_data,
             "visualization_path": visualization_path,
             "canvas_dimensions": {
@@ -1920,6 +1932,9 @@ async def place_products_in_svg(
             "base_vector": safe_get(vector_result, "base_svg_path"),
             "overlap_percentage": safe_get(vector_result, "overlap_percentage", 0)
         }
+        
+        # Convert the entire response payload to Python native types for JSON serialization
+        return convert_numpy_to_python(response_payload)
     
     except Exception as e:
         print(f"Error in placing products: {str(e)}")
